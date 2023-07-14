@@ -67,6 +67,10 @@ def apply_stereo_divergence(original_image, depth, divergence, separation, fill_
         return apply_stereo_divergence_polylines(
             original_image, normalized_depth, divergence_px, separation_px, fill_technique
         )
+    if fill_technique in ['angle']:
+        return apply_stereo_divergence_angle(
+            original_image, depth, divergence_px, separation_px, fill_technique
+        )
 
 
 @njit
@@ -257,6 +261,101 @@ def apply_stereo_divergence_polylines(
     # print(PERF_COUNTERS)
     return derived_image
 
+@njit(parallel=True) 
+def apply_stereo_divergence_angle(original_image, depth, divergence_px: float, separation_px: float, fill_technique):
+    h, w, c = original_image.shape
+    
+    ref_depth= max(depth[int(h/2)][int(w/2)], np.average(depth))
+    print(divergence_px)
+
+    theta = -np.arcsin(0.001 / (np.abs(divergence_px) / w * 100)) 
+    
+    def derived_pixels(delta_pixels, delta_depth):
+        return int(np.cos(theta)* delta_pixels - np.tan(theta) * delta_depth)
+    derived_image = np.zeros_like(original_image)
+    derived_depth = np.zeros_like(depth)
+
+    filled = np.zeros(h * w, dtype=np.uint8)
+    
+    for row in range(h):
+        for col in range(w) if divergence_px < 0 else range(w - 1, -1, -1):
+            dp = derived_pixels(int(w/2-col), depth[row][col] - ref_depth)
+            if int(w/2 - dp) - col < -(w*0.05):
+                dp = w/2 - col + (w*0.05)
+            elif int(w/2 - dp) - col > (w*0.05):
+                dp = w/2 - col - (w*0.05)
+            if w/2 - dp < 0 or w/2 - dp >w:
+                continue
+            derived_image[row][int(w/2 - dp)] = original_image[row][col]
+            derived_depth[row][int(w/2 - dp)] = depth[row][col]
+            filled[row* w + int(w/2 - dp)] =1
+            
+            
+    for row in range(h):
+        for col in range(w) if divergence_px < 0 else range(w - 1, -1, -1):
+            if filled[row* w + col] == 1:
+                continue
+            n = 1
+            left = None
+            right =None
+            left_depth = None
+            right_depth =None
+            while (left is None or right is None) and filled[row* w + col] != 1:
+                if col - n < 0 and col + n >=w:
+                    break
+                replace_left = False
+                if left is None and col - n >=0 and filled[row* w + col -n] ==1:
+                    left = derived_image[row][col - n]
+                    left_depth = derived_depth[row][col - n]
+                    if col -n - 1 < 0 or col -n - 2 < 0 or (filled[row* w + col -n -1 ] == 1 and filled[row* w + col -n -2 ] == 1):
+                        pass
+                    else:
+                        replace_left = True
+                        
+                replace_right = False
+                if right is None and col + n < w and filled[row* w + col + n] ==1:
+                    right = derived_image[row][col + n]
+                    right_depth = derived_depth[row][col + n]
+                    if col +n + 1 >= w or col +n + 2 >= w or (filled[row* w + col + n + 1 ] == 1 and filled[row* w + col + n + 2 ] == 1):
+                        pass
+                    else:
+                        replace_right = True
+                if left is not None and right is not None: 
+                    derived_image[row][col] = right if right_depth < left_depth else left
+                    derived_depth[row][col]= right_depth if right_depth < left_depth else left_depth
+                    filled[row* w + col] = 1
+                    if right_depth < left_depth and replace_right:
+                        filled[row* w + col +n] = 0
+                    if right_depth > left_depth and replace_left:
+                        filled[row* w + col -n] = 0 
+                n+=1
+    # for row in range(h):
+    #     for l_pointer in range(w):
+    #         # This if (and the next if) performs two checks that are almost the same - for performance reasons
+    #         if sum(derived_image[row][l_pointer]) != 0 or filled[row * w + l_pointer]:
+    #             continue
+    #         l_border = derived_image[row][l_pointer - 1] if l_pointer > 0 else np.zeros(3, dtype=np.uint8)
+    #         r_border = np.zeros(3, dtype=np.uint8)
+    #         r_pointer = l_pointer + 1
+    #         while r_pointer < w:
+    #             if sum(derived_image[row][r_pointer]) != 0 and filled[row * w + r_pointer]:
+    #                 r_border = derived_image[row][r_pointer]
+    #                 break
+    #             r_pointer += 1
+    #         if sum(l_border) == 0:
+    #             l_border = r_border
+    #         elif sum(r_border) == 0:
+    #             r_border = l_border
+    #         # Example illustrating positions of pointers at this point in code:
+    #         # is filled?  : +   -   -   -   -   +
+    #         # pointers    :     l               r
+    #         # interpolated: 0   1   2   3   4   5
+    #         # In total: 5 steps between two filled pixels
+    #         total_steps = 1 + r_pointer - l_pointer
+    #         step = (r_border.astype(np.float_) - l_border) / total_steps
+    #         for col in range(l_pointer, r_pointer):
+    #             derived_image[row][col] = l_border + (step * (col - l_pointer + 1)).astype(np.uint8)
+    return derived_image
 
 @njit(parallel=True)
 def overlap_red_cyan(im1, im2):

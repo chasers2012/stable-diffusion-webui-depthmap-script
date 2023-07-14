@@ -175,7 +175,7 @@ def main_ui_panel(is_depth_tab):
 			with gr.Row(visible=False) as stereo_options_row_2:
 				stereo_fill = gr.Dropdown(label="Gap fill technique",
 										  choices=['none', 'naive', 'naive_interpolating', 'polylines_soft',
-												   'polylines_sharp'], value='polylines_sharp', type="value",
+												   'polylines_sharp', 'angle'], value='polylines_sharp', type="value",
 										  elem_id="stereo_fill_type")
 				stereo_balance = gr.Slider(minimum=-1.0, maximum=1.0, step=0.05, label='Balance between eyes',
 										   value=0.0)
